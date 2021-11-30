@@ -1,0 +1,172 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID.    CBLJCLRP.
+       AUTHOR.        STUDENT.
+           CBL LIST,NOOFFSET
+      *****
+       ENVIRONMENT DIVISION.
+      *****
+       INPUT-OUTPUT SECTION.
+       FILE-CONTROL.
+           SELECT PRT-IN ASSIGN TO PRTIN.
+           SELECT PRT-OUT ASSIGN TO PRTOUT.
+      *****
+       DATA DIVISION.
+      *****
+       FILE SECTION.
+
+       FD  PRT-IN RECORD CONTAINS 80 CHARACTERS RECORDING MODE F.
+       01  IN-REC            PIC X(80) VALUE SPACES.
+
+       FD  PRT-OUT RECORD CONTAINS 80 CHARACTERS RECORDING MODE F.
+       01  OUT-REC           PIC X(80) VALUE SPACES.
+
+      *****
+       WORKING-STORAGE SECTION.
+       01  WS-TABLE.
+           05 TAB-REC        PIC X(80) OCCURS 111 TIMES VALUE SPACES.
+      *TAB-REC MUST REMAIN ON LINE 26 FOR REXX READ UPDATES
+      *****************************************************
+       01  WS-SWITCHES.
+           05  EOF-SWITCH      PIC X(1)  VALUE 'N'.
+      *LINE-SPACE-FLAG STARTS WITH VALUE Y TO GRAB FIRST DSNAME
+           05  LINE-SPACE-FLAG PIC X(1)  VALUE 'Y'.
+           05  SYSIN-FLAG      PIC X(1)  VALUE 'N'.
+
+       01  WS-UNSTRING-VARIABLES.
+           05  FIRST-FIELD   PIC X(80) VALUE SPACES.
+           05  SECOND-FIELD  PIC X(80) VALUE SPACES.
+           05  THIRD_FIELD   PIC X(80) VALUE SPACES.
+
+       01  TEMP-REC          PIC X(80) VALUE SPACES.
+
+       01  TOTAL-LINES       PIC 9(4)  VALUE 0.
+       01  I                 PIC 9(4)  VALUE 1.
+       01  WS-COUNTER        PIC 9(4)  VALUE 0.
+      ****************************************************************
+      *                  PROCEDURE DIVISION                          *
+      ****************************************************************
+       PROCEDURE DIVISION.
+      *****
+       A000-START.
+           OPEN INPUT PRT-IN.
+           OPEN OUTPUT PRT-OUT.
+
+           PERFORM A100-SORT-INPUT UNTIL EOF-SWITCH = 'Y'.
+      *I IS THE TABLE POSITION. RESETTING TO 1 FOR WRITING OUTPUT
+           MOVE 1 TO I.
+           PERFORM A200-WRITE-OUTPUT UNTIL I > TOTAL-LINES.
+
+           CLOSE PRT-IN.
+           CLOSE PRT-OUT.
+           GOBACK.
+
+      *READ THE INPUT FILE AND SORT THE INPUT
+       A100-SORT-INPUT.
+           MOVE SPACES TO IN-REC.
+           MOVE SPACES TO OUT-REC.
+
+           READ PRT-IN
+              AT END
+                 MOVE 'Y' TO EOF-SWITCH
+              NOT AT END
+
+      *FINDS JCL-DSNAME
+                 IF LINE-SPACE-FLAG = 'Y' THEN
+                    MOVE IN-REC TO TAB-REC(I)
+                    COMPUTE I = I + 1
+                    COMPUTE TOTAL-LINES = TOTAL-LINES + 1
+                    MOVE 'N' TO LINE-SPACE-FLAG
+                 END-IF
+
+      *FINDS JOBNAME
+                 MOVE 0 TO WS-COUNTER
+                 INSPECT IN-REC TALLYING WS-COUNTER
+                 FOR ALL " JOB "
+                 IF WS-COUNTER > 0 THEN
+                    MOVE IN-REC(3:8) TO TAB-REC(I)
+                    COMPUTE I = I + 1
+                    COMPUTE TOTAL-LINES = TOTAL-LINES + 1
+                 END-IF
+
+      *FINDS EXEC PROGRAM NAME
+                 MOVE 0 TO WS-COUNTER
+                 INSPECT IN-REC TALLYING WS-COUNTER
+                 FOR ALL "EXEC"
+                 IF WS-COUNTER > 0 THEN
+                    UNSTRING IN-REC DELIMITED BY "EXEC"
+                       INTO FIRST-FIELD
+                            SECOND-FIELD
+                       MOVE 0 TO WS-COUNTER
+                       INSPECT SECOND-FIELD TALLYING WS-COUNTER
+                       FOR LEADING SPACES
+                       MOVE SECOND-FIELD(WS-COUNTER + 1:)TO TAB-REC(I)
+                       COMPUTE I = I + 1
+                       COMPUTE TOTAL-LINES = TOTAL-LINES + 1
+                 END-IF
+
+      *FINDS DSN NAMES
+                 MOVE 0 TO WS-COUNTER
+                 INSPECT IN-REC TALLYING WS-COUNTER
+                 FOR ALL "DSN="
+                 IF WS-COUNTER > 0 THEN
+                    UNSTRING IN-REC DELIMITED BY "=" OR ","
+                    INTO FIRST-FIELD
+                         SECOND-FIELD
+                    MOVE SECOND-FIELD TO TAB-REC(I)
+                    COMPUTE I = I + 1
+                    COMPUTE TOTAL-LINES = TOTAL-LINES + 1
+                 END-IF
+
+      *FINDS BEGINNING OF SYSIN
+                 MOVE 0 TO WS-COUNTER
+                 INSPECT IN-REC TALLYING WS-COUNTER
+                 FOR ALL "//SYSIN"
+                 IF WS-COUNTER > 0 THEN
+                    UNSTRING IN-REC DELIMITED BY ALL SPACES
+                    INTO FIRST-FIELD
+                         SECOND-FIELD
+                         THIRD_FIELD
+                    MOVE FIRST-FIELD(3:) TO TEMP-REC(1:5)
+                    MOVE SECOND-FIELD    TO TEMP-REC(7:2)
+                    MOVE THIRD_FIELD     TO TEMP-REC(10:)
+                    MOVE TEMP-REC TO TAB-REC(I)
+                    COMPUTE I = I + 1
+                    COMPUTE TOTAL-LINES = TOTAL-LINES + 1
+                    MOVE 'Y' TO SYSIN-FLAG
+                    GO TO A100-SORT-INPUT
+                 END-IF
+
+      *SETS END OF SYSIN DATA
+                 IF IN-REC(1:2) = "/*" OR "//"
+                    MOVE 'N' TO SYSIN-FLAG
+                 END-IF
+
+      *FINDS SPACES BETWEEN JOBS, INDICATING A NEW JOB TO BE READ
+                 IF IN-REC = ALL SPACES THEN
+                    MOVE IN-REC TO TAB-REC(I)
+                    COMPUTE I = I + 1
+                    COMPUTE TOTAL-LINES = TOTAL-LINES + 1
+                    MOVE 'Y' TO LINE-SPACE-FLAG
+                    MOVE 'N' TO SYSIN-FLAG
+                 END-IF
+
+      *FINDS SYSYIN DATA
+                 IF SYSIN-FLAG = 'Y' THEN
+                    MOVE 0 TO WS-COUNTER
+                    INSPECT IN-REC TALLYING WS-COUNTER
+                    FOR LEADING SPACES
+                    MOVE IN-REC(WS-COUNTER + 1:) TO TAB-REC(I)
+                    COMPUTE I = I + 1
+                    COMPUTE TOTAL-LINES = TOTAL-LINES + 1
+                 END-IF.
+
+
+
+
+      *WRITE THE SORTED DATA TO THE OUTPUT FILE
+       A200-WRITE-OUTPUT.
+           MOVE SPACES TO OUT-REC.
+           MOVE TAB-REC(I) TO OUT-REC.
+           WRITE OUT-REC.
+           COMPUTE I = I + 1.
+
